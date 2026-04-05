@@ -3,9 +3,7 @@
  * that package.json has "types" pointing to index.d.ts.
  * Prints "All datalayer exports match" on success, exits 1 on failure.
  */
-import { existsSync } from 'fs';
-import { readFileSync } from 'fs';
-import { createRequire } from 'module';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -27,7 +25,7 @@ if (pkg.types !== 'index.d.ts') {
 }
 
 // 3. Check actual JS exports
-import('/Users/michaeljabbour/dev/t/torque-service-datalayer/index.js').then(mod => {
+import(join(pkgRoot, 'index.js')).then(mod => {
   const expected = ['DataLayer', 'BundleScopedData', 'BundleIsolationError', 'ValidationError'];
   const missing = expected.filter(name => !mod[name]);
   if (missing.length > 0) {
