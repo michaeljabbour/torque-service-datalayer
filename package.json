@@ -1,0 +1,23 @@
+{
+  "name": "@torquedev/datalayer",
+  "version": "0.1.0",
+  "description": "Torque data layer with bundle-scoped SQLite storage",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/torque-framework/torque-service-datalayer.git"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=11.0.0",
+    "uuid": ">=10.0.0"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.0.0",
+    "uuid": "^10.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
