@@ -23,6 +23,8 @@ export class ValidationError extends Error {
   }
 }
 
+const AUTO_COLS = new Set(['id', 'created_at', 'updated_at']);
+
 export class DataLayer {
   constructor(dbPath = 'data/demo.sqlite3', { readPoolSize = 3 } = {}) {
     const isMemory = dbPath === ':memory:' || dbPath === '';
@@ -440,7 +442,6 @@ export class DataLayer {
   }
 
   _validateInsert(bundle, table, attrs) {
-    const AUTO_COLS = new Set(['id', 'created_at', 'updated_at']);
     const columns = this._columns(bundle, table);
     const errors = [];
 

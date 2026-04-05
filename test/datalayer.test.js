@@ -300,7 +300,9 @@ describe('insert with validate option', () => {
   });
 
   it('does not validate when option is not set', () => {
-    // Legacy behavior: no ValidationError should be thrown even with invalid data
+    // Legacy behavior: no ValidationError should be thrown even with invalid data.
+    // Note: SQLite itself may throw a NOT NULL constraint error here.
+    // That's acceptable — we only prohibit ValidationError from this path.
     let thrownError = null;
     try {
       dl.insert('validatebundle', 'items', {});
@@ -316,6 +318,7 @@ describe('insert with validate option', () => {
     const record = dl.insert('validatebundle', 'items', { name: 'auto cols test' }, { validate: true });
     assert.ok(record.id, 'id should be auto-generated');
     assert.ok(record.created_at, 'created_at should be auto-generated');
+    assert.ok(record.updated_at, 'updated_at should be auto-generated');
   });
 });
 
