@@ -468,3 +468,159 @@ describe('BundleScopedData insert with validate option', () => {
     );
   });
 });
+
+describe('aggregate', () => {
+  let dl;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('aggbundle', {
+      sales: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          category: { type: 'string' },
+          amount: { type: 'integer' },
+          quantity: { type: 'integer' },
+        },
+      },
+    });
+    dl.insert('aggbundle', 'sales', { category: 'A', amount: 100, quantity: 2 });
+    dl.insert('aggbundle', 'sales', { category: 'B', amount: 200, quantity: 3 });
+    dl.insert('aggbundle', 'sales', { category: 'A', amount: 150, quantity: 1 });
+  });
+
+  it('counts all records', () => {
+    const results = dl.aggregate('aggbundle', 'sales', { count: '*' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].count, 3);
+  });
+
+  it('sums a column', () => {
+    const results = dl.aggregate('aggbundle', 'sales', { sum: 'amount' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].sum, 450);
+  });
+
+  it('groups and counts', () => {
+    const results = dl.aggregate('aggbundle', 'sales', { groupBy: 'category', count: '*' });
+    assert.equal(results.length, 2);
+    const a = results.find(r => r.category === 'A');
+    assert.ok(a, 'should have a group for category A');
+    assert.equal(a.count, 2);
+  });
+
+  it('computes avg/min/max', () => {
+    const results = dl.aggregate('aggbundle', 'sales', { avg: 'amount', min: 'amount', max: 'amount' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].avg, 150);
+    assert.equal(results[0].min, 100);
+    assert.equal(results[0].max, 200);
+  });
+
+  it('supports filters with aggregation', () => {
+    const results = dl.aggregate('aggbundle', 'sales', { count: '*', filters: { category: 'A' } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].count, 2);
+  });
+});
+
+describe('raw', () => {
+  let dl;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('rawbundle', {
+      items: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          name: { type: 'string' },
+        },
+      },
+    });
+    dl.insert('rawbundle', 'items', { name: 'alpha' });
+    dl.insert('rawbundle', 'items', { name: 'beta' });
+  });
+
+  it('runs raw SELECT query', () => {
+    const results = dl.raw('rawbundle', 'SELECT * FROM "rawbundle_items"');
+    assert.equal(results.length, 2);
+  });
+
+  it('runs raw COUNT query', () => {
+    const results = dl.raw('rawbundle', 'SELECT COUNT(*) as c FROM "rawbundle_items"');
+    assert.equal(results[0].c, 2);
+  });
+
+  it('throws on unknown bundle', () => {
+    assert.throws(
+      () => dl.raw('unknownbundle', 'SELECT 1'),
+      (err) => err.message.includes('unknownbundle')
+    );
+  });
+});
+
+describe('BundleScopedData aggregate and raw', () => {
+  let dl;
+  let scoped;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('scopedag', {
+      products: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          price: { type: 'integer' },
+        },
+      },
+    });
+    scoped = new BundleScopedData(dl, 'scopedag');
+    scoped.insert('products', { price: 10 });
+    scoped.insert('products', { price: 20 });
+  });
+
+  it('aggregate works through scoped data', () => {
+    const results = scoped.aggregate('products', { sum: 'price' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].sum, 30);
+  });
+
+  it('raw works through scoped data', () => {
+    const results = scoped.raw('SELECT COUNT(*) as c FROM "scopedag_products"');
+    assert.equal(results[0].c, 2);
+  });
+});
+
+describe('count() deduplication', () => {
+  let dl;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('countbundle', {
+      records: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          status: { type: 'string' },
+          value: { type: 'integer' },
+        },
+      },
+    });
+    dl.insert('countbundle', 'records', { status: 'active', value: 1 });
+    dl.insert('countbundle', 'records', { status: 'active', value: 2 });
+    dl.insert('countbundle', 'records', { status: 'inactive', value: 3 });
+  });
+
+  it('count with no filters returns total', () => {
+    assert.equal(dl.count('countbundle', 'records'), 3);
+  });
+
+  it('count with filters returns filtered count', () => {
+    assert.equal(dl.count('countbundle', 'records', { status: 'active' }), 2);
+  });
+
+  it('count rejects invalid columns', () => {
+    assert.throws(
+      () => dl.count('countbundle', 'records', { nonexistent: 'foo' }),
+      (err) => err.message.includes('nonexistent') || err.message.includes('Invalid filter column')
+    );
+  });
+});

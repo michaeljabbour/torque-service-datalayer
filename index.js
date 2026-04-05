@@ -154,19 +154,62 @@ export class DataLayer {
     this._enforceAccess(bundle, table);
     const full = this._fullName(bundle, table);
     const columns = this._columns(bundle, table);
-    const allowedCols = new Set(Object.keys(columns));
-    const clauses = [];
-    const vals = [];
-    for (const [k, v] of Object.entries(filters)) {
-      if (!allowedCols.has(k)) {
-        throw new Error(`Invalid filter column: '${k}' is not a declared column for ${bundle}.${table}`);
-      }
-      if (v === null || v === undefined) { clauses.push(`"${k}" IS NULL`); }
-      else { clauses.push(`"${k}" = ?`); vals.push(v); }
-    }
+    const { clauses, vals } = this._buildWhere(filters, columns);
     let sql = `SELECT COUNT(*) as c FROM "${full}"`;
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    return this.db.prepare(sql).get(...vals).c;
+    return this._reader().prepare(sql).get(...vals).c;
+  }
+
+  aggregate(bundle, table, opts = {}) {
+    this._enforceAccess(bundle, table);
+    const full = this._fullName(bundle, table);
+    const columns = this._columns(bundle, table);
+    const allowedCols = new Set(Object.keys(columns));
+    const { groupBy, count, sum, avg, min, max, filters } = opts;
+
+    // Validate column names
+    if (groupBy && !allowedCols.has(groupBy)) {
+      throw new Error(`Invalid column: '${groupBy}' is not a declared column for ${bundle}.${table}`);
+    }
+    for (const [label, col] of [['count', count], ['sum', sum], ['avg', avg], ['min', min], ['max', max]]) {
+      if (col !== undefined && col !== '*' && !allowedCols.has(col)) {
+        throw new Error(`Invalid column: '${col}' is not a declared column for ${bundle}.${table} (${label})`);
+      }
+    }
+
+    // Build SELECT clause
+    const selects = [];
+    if (groupBy) selects.push(`"${groupBy}"`);
+    if (count !== undefined) selects.push(`COUNT(${count === '*' ? '*' : `"${count}"`}) as "count"`);
+    if (sum !== undefined) selects.push(`SUM("${sum}") as "sum"`);
+    if (avg !== undefined) selects.push(`AVG("${avg}") as "avg"`);
+    if (min !== undefined) selects.push(`MIN("${min}") as "min"`);
+    if (max !== undefined) selects.push(`MAX("${max}") as "max"`);
+
+    let sql = `SELECT ${selects.join(', ')} FROM "${full}"`;
+
+    // Add WHERE clause from optional filters
+    let vals = [];
+    if (filters) {
+      const { clauses, vals: filterVals } = this._buildWhere(filters, columns);
+      if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+      vals = filterVals;
+    }
+
+    // Add GROUP BY
+    if (groupBy) sql += ` GROUP BY "${groupBy}"`;
+
+    return this._reader().prepare(sql).all(...vals);
+  }
+
+  raw(bundle, sql, params = []) {
+    if (!this.schemas[bundle]) {
+      throw new Error(`Bundle '${bundle}' is not registered`);
+    }
+    const isSelect = sql.trim().toUpperCase().startsWith('SELECT');
+    const db = isSelect ? this._reader() : this.db;
+    const stmt = db.prepare(sql);
+    return isSelect ? stmt.all(...params) : stmt.run(...params);
   }
 
   transaction(bundle, fn) {
@@ -532,6 +575,8 @@ export class BundleScopedData {
   delete(table, id) { return this.data.delete(this.bundle, table, id); }
   count(table, filters = {}) { return this.data.count(this.bundle, table, filters); }
   transaction(fn) { this.data.transaction(this.bundle, () => fn()); }
+  aggregate(table, opts) { return this.data.aggregate(this.bundle, table, opts); }
+  raw(sql, params) { return this.data.raw(this.bundle, sql, params); }
   // Feature 14: Relations
   findWithRelations(table, id, include) { return this.data.findWithRelations(this.bundle, table, id, include, this.coordinator); }
   queryWithRelations(table, filters, opts, include) { return this.data.queryWithRelations(this.bundle, table, filters, opts, include, this.coordinator); }
