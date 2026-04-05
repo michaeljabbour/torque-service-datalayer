@@ -390,7 +390,7 @@ describe('query with operators', () => {
   });
 
   it('$like filters with SQL LIKE pattern', () => {
-    // '%m%' matches only 'gamma' (contains double-m)
+    // '%mm%' matches only 'gamma' (contains double-m)
     const results = dl.query('testbundle', 'items', { name: { $like: '%mm%' } });
     assert.equal(results.length, 1);
     assert.equal(results[0].name, 'gamma');

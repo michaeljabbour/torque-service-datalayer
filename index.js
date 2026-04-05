@@ -25,6 +25,10 @@ export class ValidationError extends Error {
 
 const AUTO_COLS = new Set(['id', 'created_at', 'updated_at']);
 
+const OP_MAP = {
+  $eq: '=', $ne: '!=', $gt: '>', $gte: '>=', $lt: '<', $lte: '<=', $like: 'LIKE',
+};
+
 export class DataLayer {
   constructor(dbPath = 'data/demo.sqlite3', { readPoolSize = 3 } = {}) {
     const isMemory = dbPath === ':memory:' || dbPath === '';
@@ -97,15 +101,6 @@ export class DataLayer {
     const full = this._fullName(bundle, table);
     const row = this._reader().prepare(`SELECT * FROM "${full}" WHERE id = ?`).get(id) || null;
     return row ? this._restoreBooleans(row, this._columns(bundle, table)) : null;
-  }
-
-  count(bundle, table, filters = {}) {
-    this._enforceAccess(bundle, table);
-    const full = this._fullName(bundle, table);
-    const where = Object.keys(filters);
-    const clause = where.length > 0 ? ' WHERE ' + where.map(k => `"${k}" = ?`).join(' AND ') : '';
-    const row = this._reader().prepare(`SELECT COUNT(*) as cnt FROM "${full}"${clause}`).get(...Object.values(filters));
-    return row?.cnt || 0;
   }
 
   query(bundle, table, filters = {}, { order, limit, offset } = {}) {
@@ -404,10 +399,6 @@ export class DataLayer {
     const allowedCols = new Set(Object.keys(columns));
     const clauses = [];
     const vals = [];
-
-    const OP_MAP = {
-      $eq: '=', $ne: '!=', $gt: '>', $gte: '>=', $lt: '<', $lte: '<=', $like: 'LIKE',
-    };
 
     for (const [k, v] of Object.entries(filters)) {
       if (!allowedCols.has(k)) {
