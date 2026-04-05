@@ -4,6 +4,7 @@
   "description": "Torque data layer with bundle-scoped SQLite storage",
   "type": "module",
   "main": "index.js",
+  "types": "index.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
