@@ -322,6 +322,120 @@ describe('insert with validate option', () => {
   });
 });
 
+describe('query with operators', () => {
+  let dl;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('testbundle', {
+      items: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          name: { type: 'string' },
+          value: { type: 'integer' },
+          active: { type: 'boolean' },
+          created_at: { type: 'timestamp' },
+          updated_at: { type: 'timestamp' },
+        },
+      },
+    });
+    // Insert 4 test rows: alpha/10, beta/20, gamma/30, delta/20
+    dl.insert('testbundle', 'items', { name: 'alpha', value: 10 });
+    dl.insert('testbundle', 'items', { name: 'beta',  value: 20 });
+    dl.insert('testbundle', 'items', { name: 'gamma', value: 30 });
+    dl.insert('testbundle', 'items', { name: 'delta', value: 20 });
+  });
+
+  it('$eq works like plain equality', () => {
+    const results = dl.query('testbundle', 'items', { value: { $eq: 20 } });
+    assert.equal(results.length, 2);
+    assert.ok(results.every(r => r.value === 20));
+  });
+
+  it('$ne excludes matching records', () => {
+    const results = dl.query('testbundle', 'items', { value: { $ne: 20 } });
+    assert.equal(results.length, 2);
+    assert.ok(results.every(r => r.value !== 20));
+  });
+
+  it('$gt filters greater than', () => {
+    const results = dl.query('testbundle', 'items', { value: { $gt: 20 } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].name, 'gamma');
+  });
+
+  it('$gte filters greater than or equal', () => {
+    const results = dl.query('testbundle', 'items', { value: { $gte: 20 } });
+    assert.equal(results.length, 3);
+    assert.ok(results.every(r => r.value >= 20));
+  });
+
+  it('$lt filters less than', () => {
+    const results = dl.query('testbundle', 'items', { value: { $lt: 20 } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].name, 'alpha');
+  });
+
+  it('$lte filters less than or equal', () => {
+    const results = dl.query('testbundle', 'items', { value: { $lte: 20 } });
+    assert.equal(results.length, 3);
+    assert.ok(results.every(r => r.value <= 20));
+  });
+
+  it('$in filters to set of values', () => {
+    const results = dl.query('testbundle', 'items', { value: { $in: [10, 30] } });
+    assert.equal(results.length, 2);
+    const names = results.map(r => r.name).sort();
+    assert.deepEqual(names, ['alpha', 'gamma']);
+  });
+
+  it('$like filters with SQL LIKE pattern', () => {
+    // '%m%' matches only 'gamma' (contains double-m)
+    const results = dl.query('testbundle', 'items', { name: { $like: '%mm%' } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].name, 'gamma');
+  });
+
+  it('$isNull filters for NULL values', () => {
+    // Insert a row with null value
+    dl.insert('testbundle', 'items', { name: 'nullvalue', value: null });
+    const results = dl.query('testbundle', 'items', { value: { $isNull: true } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].name, 'nullvalue');
+  });
+
+  it('$notNull filters for non-NULL values', () => {
+    dl.insert('testbundle', 'items', { name: 'nullvalue', value: null });
+    const results = dl.query('testbundle', 'items', { value: { $notNull: true } });
+    assert.equal(results.length, 4); // original 4 rows have non-null values
+    assert.ok(results.every(r => r.value !== null));
+  });
+
+  it('plain values still work as equality (backward compatible)', () => {
+    const results = dl.query('testbundle', 'items', { name: 'beta' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].value, 20);
+  });
+
+  it('multiple operators combine with AND', () => {
+    const results = dl.query('testbundle', 'items', {
+      value: { $gte: 20, $lt: 30 },
+    });
+    assert.equal(results.length, 2);
+    assert.ok(results.every(r => r.value >= 20 && r.value < 30));
+  });
+
+  it('throws on unknown operator', () => {
+    assert.throws(
+      () => dl.query('testbundle', 'items', { value: { $unknown: 5 } }),
+      (err) => {
+        assert.ok(err.message.includes('$unknown'));
+        return true;
+      }
+    );
+  });
+});
+
 describe('BundleScopedData insert with validate option', () => {
   let dl;
   let scoped;

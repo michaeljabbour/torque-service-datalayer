@@ -112,21 +112,7 @@ export class DataLayer {
     this._enforceAccess(bundle, table);
     const full = this._fullName(bundle, table);
     const columns = this._columns(bundle, table);
-    const allowedCols = new Set(Object.keys(columns));
-    const clauses = [];
-    const vals = [];
-    for (const [k, v] of Object.entries(filters)) {
-      if (!allowedCols.has(k)) {
-        throw new Error(`Invalid filter column: '${k}' is not a declared column for ${bundle}.${table}`);
-      }
-      if (v === null || v === undefined) { clauses.push(`"${k}" IS NULL`); }
-      else {
-        clauses.push(`"${k}" = ?`);
-        const colSpec = columns[k];
-        const isBool = colSpec && (colSpec.type === 'boolean' || colSpec === 'boolean');
-        vals.push(isBool && typeof v === 'boolean' ? (v ? 1 : 0) : v);
-      }
-    }
+    const { clauses, vals } = this._buildWhere(filters, columns);
     let sql = `SELECT * FROM "${full}"`;
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
     if (order) {
@@ -136,8 +122,7 @@ export class DataLayer {
     if (limit) sql += ` LIMIT ${parseInt(limit)}`;
     if (offset) sql += ` OFFSET ${parseInt(offset)}`;
     const rows = this._reader().prepare(sql).all(...vals);
-    const cols = this._columns(bundle, table);
-    return rows.map(row => this._restoreBooleans(row, cols));
+    return rows.map(row => this._restoreBooleans(row, columns));
   }
 
   update(bundle, table, id, attrs) {
@@ -407,6 +392,64 @@ export class DataLayer {
         this.db.exec(`CREATE ${unique}INDEX IF NOT EXISTS "${idxName}" ON "${fullName}" (${cols})`);
       }
     }
+  }
+
+  /**
+   * Build WHERE clauses from a filters object supporting operator objects.
+   * @param {object} filters - Filters map: { colName: value | operatorObject }
+   * @param {object} columns - Declared columns from the manifest schema
+   * @returns {{ clauses: string[], vals: any[] }}
+   */
+  _buildWhere(filters, columns) {
+    const allowedCols = new Set(Object.keys(columns));
+    const clauses = [];
+    const vals = [];
+
+    const OP_MAP = {
+      $eq: '=', $ne: '!=', $gt: '>', $gte: '>=', $lt: '<', $lte: '<=', $like: 'LIKE',
+    };
+
+    for (const [k, v] of Object.entries(filters)) {
+      if (!allowedCols.has(k)) {
+        throw new Error(`Invalid filter column: '${k}' is not a declared column`);
+      }
+      const colSpec = columns[k];
+      const isBool = colSpec && (colSpec.type === 'boolean' || colSpec === 'boolean');
+
+      const coerce = (val) => isBool && typeof val === 'boolean' ? (val ? 1 : 0) : val;
+
+      // Operator object: { $gt: 5, $lt: 10, ... }
+      if (v !== null && v !== undefined && typeof v === 'object' && !Array.isArray(v)) {
+        for (const [op, opVal] of Object.entries(v)) {
+          if (op in OP_MAP) {
+            clauses.push(`"${k}" ${OP_MAP[op]} ?`);
+            vals.push(coerce(opVal));
+          } else if (op === '$in') {
+            if (!Array.isArray(opVal) || opVal.length === 0) {
+              throw new Error(`$in requires a non-empty array for column '${k}'`);
+            }
+            const placeholders = opVal.map(() => '?').join(', ');
+            clauses.push(`"${k}" IN (${placeholders})`);
+            for (const item of opVal) vals.push(coerce(item));
+          } else if (op === '$isNull') {
+            clauses.push(`"${k}" IS NULL`);
+          } else if (op === '$notNull') {
+            clauses.push(`"${k}" IS NOT NULL`);
+          } else {
+            throw new Error(`Unknown operator '${op}' on column '${k}'`);
+          }
+        }
+      } else if (v === null || v === undefined) {
+        // Plain null/undefined -> IS NULL
+        clauses.push(`"${k}" IS NULL`);
+      } else {
+        // Plain value -> equality
+        clauses.push(`"${k}" = ?`);
+        vals.push(coerce(v));
+      }
+    }
+
+    return { clauses, vals };
   }
 
   /**
