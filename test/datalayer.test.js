@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { DataLayer, BundleScopedData, BundleIsolationError } from '../index.js';
+import { DataLayer, BundleScopedData, BundleIsolationError, ValidationError } from '../index.js';
 
 describe('DataLayer', () => {
   let dl;
@@ -246,5 +246,108 @@ describe('BundleScopedData', () => {
     assert.equal(found.name, 'test');
 
     assert.equal(scoped.count('items'), 1);
+  });
+});
+
+describe('insert with validate option', () => {
+  let dl;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('validatebundle', {
+      items: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          name: { type: 'string', null: false },
+          email: { type: 'string' },
+          count: { type: 'integer' },
+          active: { type: 'boolean', default: false },
+          created_at: { type: 'timestamp' },
+          updated_at: { type: 'timestamp' },
+        },
+      },
+    });
+  });
+
+  it('passes validation when required fields are present', () => {
+    const record = dl.insert('validatebundle', 'items', { name: 'test item' }, { validate: true });
+    assert.ok(record.id);
+    assert.equal(record.name, 'test item');
+  });
+
+  it('throws when a required field (null: false) is missing', () => {
+    assert.throws(
+      () => dl.insert('validatebundle', 'items', {}, { validate: true }),
+      (err) => {
+        assert.ok(err instanceof ValidationError, 'should be a ValidationError');
+        const nameError = err.errors.find(e => e.field === 'name' && e.rule === 'required');
+        assert.ok(nameError, 'should have a required error for name field');
+        return true;
+      }
+    );
+  });
+
+  it('throws when a field has the wrong type', () => {
+    assert.throws(
+      () => dl.insert('validatebundle', 'items', { name: 'test', count: 'not-a-number' }, { validate: true }),
+      (err) => {
+        assert.ok(err instanceof ValidationError, 'should be a ValidationError');
+        const countError = err.errors.find(e => e.field === 'count' && e.rule === 'type');
+        assert.ok(countError, 'should have a type error for count field');
+        return true;
+      }
+    );
+  });
+
+  it('does not validate when option is not set', () => {
+    // Legacy behavior: no ValidationError should be thrown even with invalid data
+    let thrownError = null;
+    try {
+      dl.insert('validatebundle', 'items', {});
+    } catch (err) {
+      thrownError = err;
+    }
+    if (thrownError !== null) {
+      assert.ok(!(thrownError instanceof ValidationError), 'should not throw ValidationError (only DB-level errors allowed)');
+    }
+  });
+
+  it('skips auto-generated columns (id, created_at, updated_at)', () => {
+    const record = dl.insert('validatebundle', 'items', { name: 'auto cols test' }, { validate: true });
+    assert.ok(record.id, 'id should be auto-generated');
+    assert.ok(record.created_at, 'created_at should be auto-generated');
+  });
+});
+
+describe('BundleScopedData insert with validate option', () => {
+  let dl;
+  let scoped;
+
+  beforeEach(() => {
+    dl = new DataLayer(':memory:');
+    dl.registerSchema('scopedbundle', {
+      items: {
+        columns: {
+          id: { type: 'uuid', primary: true },
+          title: { type: 'string', null: false },
+          created_at: { type: 'timestamp' },
+          updated_at: { type: 'timestamp' },
+        },
+      },
+    });
+    scoped = new BundleScopedData(dl, 'scopedbundle');
+  });
+
+  it('passes validate option through to DataLayer', () => {
+    const record = scoped.insert('items', { title: 'hello' }, { validate: true });
+    assert.ok(record.id);
+    assert.equal(record.title, 'hello');
+  });
+
+  it('throws ValidationError for missing required fields', () => {
+    assert.throws(
+      () => scoped.insert('items', {}, { validate: true }),
+      (err) => err instanceof ValidationError
+    );
   });
 });

@@ -13,6 +13,16 @@ export class BundleIsolationError extends Error {
   }
 }
 
+export class ValidationError extends Error {
+  constructor(errors) {
+    const fields = errors.map(e => e.field).join(', ');
+    super(`Validation failed: ${fields}`);
+    this.name = 'ValidationError';
+    this.code = 'VALIDATION_FAILED';
+    this.errors = errors;
+  }
+}
+
 export class DataLayer {
   constructor(dbPath = 'data/demo.sqlite3', { readPoolSize = 3 } = {}) {
     const isMemory = dbPath === ':memory:' || dbPath === '';
@@ -60,8 +70,11 @@ export class DataLayer {
     }
   }
 
-  insert(bundle, table, attrs) {
+  insert(bundle, table, attrs, opts = {}) {
     this._enforceAccess(bundle, table);
+    if (opts.validate) {
+      this._validateInsert(bundle, table, attrs);
+    }
     const full = this._fullName(bundle, table);
     const columns = this._columns(bundle, table);
     const record = { ...attrs };
@@ -425,6 +438,50 @@ export class DataLayer {
   _sqlType(type) {
     return { uuid: 'TEXT', string: 'TEXT', integer: 'INTEGER', boolean: 'INTEGER', float: 'REAL', decimal: 'REAL', timestamp: 'TEXT', datetime: 'TEXT', text: 'TEXT' }[type] || 'TEXT';
   }
+
+  _validateInsert(bundle, table, attrs) {
+    const AUTO_COLS = new Set(['id', 'created_at', 'updated_at']);
+    const columns = this._columns(bundle, table);
+    const errors = [];
+
+    for (const [col, spec] of Object.entries(columns)) {
+      if (AUTO_COLS.has(col)) continue;
+      const colSpec = typeof spec === 'string' ? { type: spec } : spec;
+      const value = attrs[col];
+
+      // Check required (null: false or required: true)
+      if (colSpec.null === false || colSpec.required === true) {
+        if (value === undefined || value === null || value === '') {
+          errors.push({ field: col, rule: 'required' });
+          continue;
+        }
+      }
+
+      // Type check (only if value is provided and not null/undefined)
+      if (value !== undefined && value !== null) {
+        const type = colSpec.type;
+        let typeOk = true;
+        if (type === 'string' || type === 'text') {
+          typeOk = typeof value === 'string';
+        } else if (type === 'integer') {
+          typeOk = typeof value === 'number' && Number.isInteger(value);
+        } else if (type === 'float' || type === 'decimal') {
+          typeOk = typeof value === 'number';
+        } else if (type === 'boolean') {
+          typeOk = typeof value === 'boolean';
+        } else if (type === 'uuid') {
+          typeOk = typeof value === 'string';
+        }
+        if (!typeOk) {
+          errors.push({ field: col, rule: 'type' });
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new ValidationError(errors);
+    }
+  }
 }
 
 export class BundleScopedData {
@@ -433,7 +490,7 @@ export class BundleScopedData {
     this.bundle = bundleName;
     this.coordinator = coordinator;
   }
-  insert(table, attrs) { return this.data.insert(this.bundle, table, attrs); }
+  insert(table, attrs, opts = {}) { return this.data.insert(this.bundle, table, attrs, opts); }
   find(table, id) { return this.data.find(this.bundle, table, id); }
   query(table, filters = {}, opts = {}) { return this.data.query(this.bundle, table, filters, opts); }
   update(table, id, attrs) { return this.data.update(this.bundle, table, id, attrs); }
